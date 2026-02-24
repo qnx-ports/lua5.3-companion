@@ -1,0 +1,119 @@
+# Alpine-Maintainer: Natanael Copa <ncopa@alpinelinux.org>
+# Maintainer: Ethan Leir <eleir@qnx.com>
+pkgname=lua5.3
+_pkgname=lua
+pkgver=5.3.6
+_luaver=${pkgname#lua}
+pkgrel=0
+pkgdesc="Powerful light-weight programming language"
+url="https://www.lua.org/"
+arch="all"
+license="MIT"
+ldpath="/usr/lib/$pkgname"
+depends_dev="$pkgname"
+makedepends="libtool autoconf automake readline-dev"
+provides="lua"
+provider_priority=300
+subpackages="$pkgname-dev $pkgname-doc $pkgname-libs"
+source="https://www.lua.org/ftp/$_pkgname-$pkgver.tar.gz
+    lua.pc
+    lua-5.3-make.patch
+    lua-5.3-module_paths.patch
+    "
+builddir="$srcdir/$_pkgname-$pkgver"
+
+prepare() {
+    default_prepare
+    # disable readline
+    sed -i '/#define LUA_USE_READLINE/d' src/luaconf.h
+
+    # we use libtool
+    echo "top_buildir=." > configure.ac
+    echo "AC_INIT(src/luaconf.h)" >> configure.ac
+    echo "AC_PROG_LIBTOOL" >> configure.ac
+    echo "AC_OUTPUT()" >> configure.ac
+
+    libtoolize --force --install && aclocal && autoconf
+}
+
+build() {
+    # Prepare lua.pc
+    if ! [[ -e $srcdir/lua.pc ]]; then
+        die "Need lua.pc"
+    fi
+    sed "s/%VER%/$_luaver/g;s/%REL%/$pkgver/g;" $srcdir/lua.pc > $srcdir/lua.pc.patched
+
+    CFLAGS="$CFLAGS -Qunused-arguments" \
+    ./configure \
+        --build=$CBUILD \
+        --host=$CHOST \
+        --prefix=/usr
+
+    cd src
+    make V=${pkgver%.*} \
+        CFLAGS="$CFLAGS -DLUA_USE_POSIX -DLUA_USE_DLOPEN -DLUA_USE_READLINE -DLUA_COMPAT_5_2" \
+        SYSLDFLAGS="$LDFLAGS" \
+        RPATH="/usr/lib" \
+        LIB_LIBS="-lm -lreadline" \
+        qnx_all
+}
+
+check() {
+    make test
+}
+
+package() {
+    local i
+    make V=${pkgver%.*} \
+        INSTALL_TOP="$pkgdir"/usr \
+        INSTALL_INC="$pkgdir"/usr/include/$pkgname \
+        INSTALL_LIB="$pkgdir"/usr/lib/$pkgname \
+        qnx_install
+
+    for i in "$pkgdir"/usr/bin/* ; do
+        mv "$i" "$i"$_luaver
+    done
+
+    for i in "$pkgdir"/usr/lib/$pkgname/*.so.*; do
+        ln -s $pkgname/${i##*/} "$pkgdir"/usr/lib/${i##*/}
+    done
+
+    install -D -m 644 doc/lua.1 "$pkgdir"/usr/share/man/man1/lua$_luaver.1
+    install -D -m 644 doc/luac.1 "$pkgdir"/usr/share/man/man1/luac$_luaver.1
+
+    mkdir -p "$pkgdir"/usr/share/doc/$pkgname/
+    install -m644 doc/*.html doc/*.css doc/logo.gif doc/osi-certified-72x60.png \
+        "$pkgdir"/usr/share/doc/$pkgname/
+
+    install -d "$pkgdir"/usr/lib/pkgconfig
+    install -Dm644 $srcdir/lua.pc.patched "$pkgdir"/usr/lib/pkgconfig/lua$_luaver.pc
+
+    # compat names since we are unique
+    # other distros name it lua-5.3 or lua53. pick the former as a compat name..
+    ln -sv lua$_luaver.pc "$pkgdir"/usr/lib/pkgconfig/lua-$_luaver.pc
+}
+
+dev() {
+    default_dev
+
+    mkdir -p "$subpkgdir"/usr/$pkgname "$subpkgdir"/usr/lib/$pkgname
+    ln -s ../include/$pkgname "$subpkgdir"/usr/$pkgname/include
+    ln -s ../lib/$pkgname "$subpkgdir"/usr/$pkgname/lib
+    mv "$pkgdir"/usr/lib/$pkgname/liblua.so "$subpkgdir"/usr/lib/$pkgname/
+}
+
+libs() {
+    pkgdesc="Lua dynamic library runtime"
+    depends="$pkgname=$pkgver-r$pkgrel readline"
+    replaces="lua"
+
+    mkdir -p "$subpkgdir"/usr
+    mv "$pkgdir"/usr/lib "$subpkgdir"/usr/
+}
+
+sha512sums="
+ccc380d5e114d54504de0bfb0321ca25ec325d6ff1bfee44b11870b660762d1a9bf120490c027a0088128b58bb6b5271bbc648400cab84d2dc22b512c4841681  lua-5.3.6.tar.gz
+11c1d29b396011592b9a7159af9c740e30fa15e3688d952aa67094bc5e391f4acc91808867711f90c5a1a5872a32e0b98ccdfa33cf8a33224ec1246cb17a8e12  lua.pc
+415ad2c06af36b1e58c75b4eab6746f1643a9d40198f47e2998b08c0a2e9e24af2136c7d487f247f6bc5232e3bfa8a125b9c8f405e6ff67fa180ff40e3e7c873  lua-5.3-make.patch
+bc68772390dc8d8940176af0b9fbacc0af61891b5d27de5f1466a4e7f9b3291a1c08ba5add829bc96b789a53fa5ec2dadaa096ca6eabe54ec27724fa2810940f  lua-5.3-module_paths.patch
+"
